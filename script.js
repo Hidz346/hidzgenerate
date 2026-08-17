@@ -105,7 +105,7 @@ fileInput.addEventListener('change', () => {
 function addFiles(fileList) {
   Array.from(fileList).forEach((file) => {
     const id = `f${Date.now()}${Math.random().toString(36).slice(2, 7)}`;
-    queue.push({ id, file, status: 'pending', progress: 0 });
+    queue.push({ id, file, status: 'pending', progress: 0, errorMessage: '' });
   });
   renderQueue();
 }
@@ -117,6 +117,7 @@ function renderQueue() {
     const li = document.createElement('li');
     li.className = 'file-row';
     if (item.status === 'done') li.classList.add('is-done');
+    if (item.status === 'error') li.classList.add('is-error');
     li.dataset.id = item.id;
 
     const thumb = document.createElement('div');
@@ -149,9 +150,34 @@ function renderQueue() {
     progressWrap.appendChild(progressBar);
 
     info.append(name, size, progressWrap);
+
+    if (item.status === 'error') {
+      const errorMsg = document.createElement('div');
+      errorMsg.className = 'file-error-msg';
+      errorMsg.textContent = `⚠ ${item.errorMessage || 'Gagal upload, coba lagi.'}`;
+      info.appendChild(errorMsg);
+    }
+
     li.append(thumb, info);
 
-    if (item.status === 'pending') {
+    if (item.status === 'pending' || item.status === 'error') {
+      const actions = document.createElement('div');
+      actions.className = 'file-row-actions';
+
+      if (item.status === 'error') {
+        const retryBtn = document.createElement('button');
+        retryBtn.className = 'file-retry';
+        retryBtn.type = 'button';
+        retryBtn.textContent = 'Coba lagi';
+        retryBtn.addEventListener('click', async () => {
+          item.status = 'uploading';
+          item.progress = 0;
+          renderQueue();
+          await uploadOne(item);
+        });
+        actions.appendChild(retryBtn);
+      }
+
       const removeBtn = document.createElement('button');
       removeBtn.className = 'file-remove';
       removeBtn.type = 'button';
@@ -161,7 +187,9 @@ function renderQueue() {
         queue = queue.filter((q) => q.id !== item.id);
         renderQueue();
       });
-      li.appendChild(removeBtn);
+      actions.appendChild(removeBtn);
+
+      li.appendChild(actions);
     }
 
     fileQueueEl.appendChild(li);
@@ -197,8 +225,17 @@ btnUploadFiles.addEventListener('click', async () => {
 
 function uploadOne(item) {
   item.status = 'uploading';
+  item.errorMessage = '';
   const safeName = item.file.name.replace(/[^a-zA-Z0-9.\-_]/g, '_');
   const path = `${datePath()}/${Date.now()}-${safeName}`;
+
+  // Anon key format lama berupa JWT (selalu diawali "eyJ") dan memang wajib
+  // dikirim lewat header Authorization: Bearer. Publishable key format baru
+  // ("sb_publishable_...") BUKAN JWT — kalau tetap dikirim lewat header
+  // Authorization, Supabase menolaknya dengan "Invalid JWT" (lihat dok resmi:
+  // https://supabase.com/docs/guides/getting-started/migrating-to-new-api-keys).
+  // Untuk format baru, cukup header apikey saja.
+  const isLegacyJwtKey = SUPABASE_ANON_KEY.startsWith('eyJ');
 
   return new Promise((resolve) => {
     const upload = new tus.Upload(item.file, {
@@ -208,8 +245,8 @@ function uploadOne(item) {
       uploadDataDuringCreation: true,
       removeFingerprintOnSuccess: true,
       headers: {
-        authorization: `Bearer ${SUPABASE_ANON_KEY}`,
         apikey: SUPABASE_ANON_KEY,
+        ...(isLegacyJwtKey ? { authorization: `Bearer ${SUPABASE_ANON_KEY}` } : {}),
         'x-upsert': 'false',
       },
       metadata: {
@@ -225,6 +262,7 @@ function uploadOne(item) {
       },
       onError: (error) => {
         item.status = 'error';
+        item.errorMessage = describeUploadError(error);
         console.error('Upload gagal:', error);
         renderQueue();
         resolve();
@@ -248,6 +286,16 @@ function uploadOne(item) {
       upload.start();
     });
   });
+}
+
+// Ubah error tus-js-client (yang isinya teknis) jadi pesan singkat buat user.
+function describeUploadError(error) {
+  const status = error?.originalResponse?.getStatus?.();
+  if (status === 401 || status === 403) return 'Ditolak server (cek API key & policy bucket di Supabase).';
+  if (status === 404) return 'Bucket tidak ditemukan (cek nama bucket di Supabase Storage).';
+  if (status === 400) return 'Permintaan ditolak server (kemungkinan file sudah ada / bucket belum publik).';
+  if (!navigator.onLine) return 'Koneksi internet terputus.';
+  return 'Gagal upload, coba lagi.';
 }
 
 function datePath() {
@@ -422,7 +470,7 @@ function buildQrOptions(text, size, style) {
   return {
     width: size,
     height: size,
-    type: 'canvas',
+    type: 'svg',
     data: text,
     margin: 12,
     qrOptions: { errorCorrectionLevel: hasLogo ? 'H' : 'Q' },
@@ -444,7 +492,7 @@ function generateAndShow(text, label) {
 
 function renderResultQr(text, style) {
   resultCanvas.innerHTML = '';
-  currentQr = new QRCodeStyling(buildQrOptions(text, 220, style));
+  currentQr = new QRCodeStyling(buildQrOptions(text, 900, style));
   currentQr.append(resultCanvas);
 }
 
@@ -472,7 +520,7 @@ function addHistoryCard(text, label) {
   qrContainer.className = 'history-card-qr';
   li.appendChild(qrContainer);
 
-  const qrInstance = new QRCodeStyling(buildQrOptions(text, 160, styleSnapshot));
+  const qrInstance = new QRCodeStyling(buildQrOptions(text, 600, styleSnapshot));
   qrInstance.append(qrContainer);
 
   const labelEl = document.createElement('div');
