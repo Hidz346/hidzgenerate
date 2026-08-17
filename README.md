@@ -57,4 +57,4 @@ Dependency dimuat langsung dari CDN, gak perlu `npm install`:
 
 ## Catatan
 
-File yang diupload masuk ke path `hidzgenerate/{tahun}/{bulan}/...` di bucket, biar rapi dan gampang di-audit dari Supabase Dashboard. Riwayat QR di halaman cuma tersimpan untuk sesi berjalan (gak dipersist ke database) — refresh halaman akan mengosongkan riwayat, tapi file yang sudah terupload tetap ada di Storage.
+File yang diupload masuk ke path `hidzgenerate/{tahun}/{bulan}/...` di bucket, biar rapi dan gampang di-audit dari Supabase Dashboard. Riwayat QR disimpan di `localStorage` browser (bukan database) — jadi tetap ada walau tab ditutup atau halamannya dibuka lagi lain waktu, dan cuma hilang kalau dihapus manual lewat tombol hapus di kartunya. Karena disimpan per-browser, riwayat gak ikut pindah kalau buka dari perangkat/browser lain.

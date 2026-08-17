@@ -26,6 +26,9 @@ const btnCopy = document.getElementById('btn-copy');
 const historyList = document.getElementById('history-list');
 const historyEmpty = document.getElementById('history-empty');
 
+const btnReset = document.getElementById('btn-reset');
+const themeToggle = document.getElementById('theme-toggle');
+
 const styleSwatchRow = document.getElementById('style-swatch-row');
 const bgPresetRow = document.getElementById('bg-preset-row');
 const fgColorInput = document.getElementById('fg-color-input');
@@ -39,6 +42,34 @@ const btnRemoveLogo = document.getElementById('btn-remove-logo');
 let queue = [];
 let currentResultUrl = '';
 let currentQr = null;
+
+/* ---------- tema (mode gelap/terang) ---------- */
+// Nilai awal atribut data-theme sudah di-set lebih dulu lewat inline script
+// di index.html (biar nggak ada kedipan tema salah pas halaman baru kebuka).
+// Di sini cuma ngurusin klik tombolnya + nyimpen pilihan buat kunjungan berikutnya.
+
+const THEME_KEY = 'hidzgenerate:theme';
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  themeToggle.setAttribute('aria-pressed', String(theme === 'dark'));
+}
+
+// Cuma nyimpen ke localStorage pas usernya sendiri yang klik — kalau tema awal
+// masih ngikutin preferensi sistem (belum pernah di-klik), biarin tetap ngikut
+// preferensi sistem itu buat kunjungan berikutnya, bukan dikunci diam-diam.
+themeToggle.addEventListener('click', () => {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    // storage nggak tersedia (mis. mode private ketat) — tema tetap jalan,
+    // cuma nggak keinget buat kunjungan berikutnya
+  }
+});
+
+applyTheme(document.documentElement.getAttribute('data-theme') || 'light');
 
 /* ---------- tabs ---------- */
 
@@ -71,6 +102,22 @@ btnGenerateLink.addEventListener('click', () => {
 
 linkInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') btnGenerateLink.click();
+});
+
+/* ---------- reset: balik ke tampilan kosong ---------- */
+
+btnReset.addEventListener('click', () => {
+  linkInput.value = '';
+  queue = [];
+  renderQueue();
+
+  resultSection.classList.add('is-hidden');
+  currentResultUrl = '';
+  currentQr = null;
+
+  const activeTab = document.querySelector('.tab.is-active');
+  (activeTab?.dataset.mode === 'file' ? dropzone : linkInput).focus();
+  document.querySelector('.panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 
 /* ---------- file mode: pick & drag-drop ---------- */
@@ -536,7 +583,7 @@ function buildQrOptions(text, size, style) {
 
 function generateAndShow(text, label, storagePath) {
   presentResult(text, label);
-  addHistoryCard(text, label, storagePath);
+  addHistoryEntry(text, label, storagePath);
 }
 
 function renderResultQr(text, style) {
@@ -558,78 +605,163 @@ function refreshLivePreview() {
   renderResultQr(currentResultUrl, { ...qrStyle });
 }
 
-function addHistoryCard(text, label, storagePath) {
+/* ---------- riwayat: kesimpen permanen di localStorage ----------
+   Sengaja pakai localStorage (bukan sessionStorage): riwayat harus tetap ada
+   walau tab ditutup, browser di-restart, atau halaman ini ditinggal lalu
+   dibuka lagi lain waktu. Satu-satunya jalan riwayat hilang adalah lewat
+   tombol hapus di kartunya masing-masing. */
+
+const HISTORY_KEY = 'hidzgenerate:history';
+let historyEntries = loadHistory();
+
+function loadHistory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory() {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(historyEntries));
+  } catch {
+    // Paling sering kepenuhan kuota gara-gara logo custom (base64) yang
+    // numpuk. Coba simpan ulang tanpa data logo dulu, biar riwayatnya
+    // sendiri tetap kesimpen walau nanti logo di kartu lama nggak muncul.
+    try {
+      const lean = historyEntries.map((entry) => ({ ...entry, style: { ...entry.style, logoDataUrl: '' } }));
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(lean));
+    } catch {
+      // Tetap gagal — biarkan, riwayat cuma hidup buat sesi ini. Fitur
+      // generate QR-nya sendiri harus tetap jalan normal.
+    }
+  }
+}
+
+const HISTORY_ICONS = {
+  download: '<svg viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>',
+  copy: '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
+  check: '<svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>',
+  trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13M10 11v6M14 11v6"/></svg>',
+};
+
+function addHistoryEntry(text, label, storagePath) {
+  const entry = {
+    id: `h${Date.now()}${Math.random().toString(36).slice(2, 7)}`,
+    text,
+    label,
+    storagePath: storagePath || '',
+    style: { ...qrStyle },
+  };
+  historyEntries.unshift(entry);
+  saveHistory();
+
   historyEmpty.classList.add('is-hidden');
-  const styleSnapshot = { ...qrStyle };
+  historyList.prepend(buildHistoryCard(entry));
+}
+
+function buildHistoryCard(entry) {
+  const { text, label, style } = entry;
 
   const li = document.createElement('li');
   li.className = 'history-card';
 
-  const qrContainer = document.createElement('div');
-  qrContainer.className = 'history-card-qr';
-  li.appendChild(qrContainer);
+  const thumb = document.createElement('div');
+  thumb.className = 'history-card-thumb';
+  li.appendChild(thumb);
 
-  const qrInstance = new QRCodeStyling(buildQrOptions(text, 600, styleSnapshot));
-  qrInstance.append(qrContainer);
+  const qrInstance = new QRCodeStyling(buildQrOptions(text, 600, style));
+  qrInstance.append(thumb);
 
-  const labelEl = document.createElement('div');
+  const body = document.createElement('div');
+  body.className = 'history-card-body';
+
+  const labelEl = document.createElement('p');
   labelEl.className = 'history-card-label';
   labelEl.textContent = label;
   labelEl.title = label;
-  li.appendChild(labelEl);
+  body.appendChild(labelEl);
+
+  // Buat riwayat dari mode Upload File, label-nya nama file (pendek) tapi
+  // yang ke-encode di QR adalah URL publiknya (panjang) — tampilkan dua-duanya,
+  // sama seperti mode Link/Teks yang cukup satu baris karena label & isinya sama.
+  if (text !== label) {
+    const metaEl = document.createElement('p');
+    metaEl.className = 'history-card-meta';
+    metaEl.textContent = text;
+    metaEl.title = text;
+    body.appendChild(metaEl);
+  }
+
+  li.appendChild(body);
 
   const actions = document.createElement('div');
   actions.className = 'history-card-actions';
 
   const dlBtn = document.createElement('button');
   dlBtn.type = 'button';
-  dlBtn.textContent = 'Unduh';
+  dlBtn.className = 'history-icon-btn';
+  dlBtn.title = 'Unduh QR';
+  dlBtn.setAttribute('aria-label', `Unduh QR ${label}`);
+  dlBtn.innerHTML = HISTORY_ICONS.download;
   dlBtn.addEventListener('click', () => qrInstance.download({ name: `qr-${slugify(label)}`, extension: 'png' }));
 
   const copyBtn = document.createElement('button');
   copyBtn.type = 'button';
-  copyBtn.textContent = 'Salin';
-  copyBtn.addEventListener('click', () => copyText(text, copyBtn));
+  copyBtn.className = 'history-icon-btn';
+  copyBtn.title = 'Salin link';
+  copyBtn.setAttribute('aria-label', `Salin link ${label}`);
+  copyBtn.innerHTML = HISTORY_ICONS.copy;
+  copyBtn.addEventListener('click', () => copyHistoryLink(text, copyBtn));
 
   const delBtn = document.createElement('button');
   delBtn.type = 'button';
-  delBtn.className = 'history-card-delete';
-  delBtn.textContent = 'Hapus';
-  delBtn.addEventListener('click', () => deleteHistoryCard(li, delBtn, storagePath));
+  delBtn.className = 'history-icon-btn history-icon-btn--danger';
+  delBtn.title = 'Hapus';
+  delBtn.setAttribute('aria-label', `Hapus riwayat ${label}`);
+  delBtn.innerHTML = HISTORY_ICONS.trash;
+  delBtn.addEventListener('click', () => deleteHistoryCard(li, delBtn, entry));
 
   actions.append(dlBtn, copyBtn, delBtn);
   li.appendChild(actions);
 
-  historyList.prepend(li);
+  return li;
 }
 
 // Hapus 1 kartu riwayat. Kalau riwayatnya berasal dari mode Upload File
 // (storagePath terisi), file aslinya di Supabase Storage ikut dihapus juga —
 // jadi link publik yang sudah kepatri di QR itu langsung mati dan QR-nya
 // otomatis nggak bisa dipakai lagi begitu di-scan. Riwayat dari mode Link/Teks
-// nggak nyimpen apa-apa di server, jadi cukup dihapus dari daftar saja.
-async function deleteHistoryCard(li, delBtn, storagePath) {
-  const confirmMsg = storagePath
+// nggak nyimpen apa-apa di server, jadi cukup dihapus dari daftar & localStorage.
+async function deleteHistoryCard(li, delBtn, entry) {
+  const confirmMsg = entry.storagePath
     ? 'Hapus riwayat ini? File yang sudah diupload ikut terhapus dan QR-nya jadi nggak bisa dipakai lagi. Lanjutkan?'
     : 'Hapus riwayat ini?';
   if (!confirm(confirmMsg)) return;
 
-  if (storagePath) {
+  if (entry.storagePath) {
     delBtn.disabled = true;
-    delBtn.textContent = 'Menghapus...';
-    const { error } = await supabase.storage.from(BUCKET).remove([storagePath]);
+    const { error } = await supabase.storage.from(BUCKET).remove([entry.storagePath]);
     delBtn.disabled = false;
     if (error) {
       console.error('Gagal menghapus file:', error);
-      delBtn.textContent = 'Hapus';
-      flashButton(delBtn, 'Gagal, coba lagi');
+      flashClass(delBtn, 'is-error');
       return;
     }
   }
 
+  historyEntries = historyEntries.filter((item) => item.id !== entry.id);
+  saveHistory();
   li.remove();
   if (!historyList.children.length) historyEmpty.classList.remove('is-hidden');
 }
+
+// Riwayat dari kunjungan sebelumnya (kesimpen di localStorage) dirender di
+// sini pas halaman dibuka, urutannya tetap terbaru di paling atas.
+historyEntries.forEach((entry) => historyList.appendChild(buildHistoryCard(entry)));
+if (historyEntries.length) historyEmpty.classList.add('is-hidden');
 
 /* ---------- result actions ---------- */
 
@@ -639,7 +771,7 @@ btnDownload.addEventListener('click', () => {
 });
 btnCopy.addEventListener('click', () => copyText(currentResultUrl, btnCopy));
 
-async function copyText(text, btnEl) {
+async function writeToClipboard(text) {
   try {
     await navigator.clipboard.writeText(text);
   } catch {
@@ -652,13 +784,39 @@ async function copyText(text, btnEl) {
     document.execCommand('copy');
     document.body.removeChild(ta);
   }
+}
+
+async function copyText(text, btnEl) {
+  await writeToClipboard(text);
   flashButton(btnEl, 'Tersalin!');
+}
+
+// Versi buat tombol ikon di kartu riwayat: nggak ada ruang buat teks,
+// jadi ikonnya sendiri yang sementara ganti jadi centang.
+async function copyHistoryLink(text, btnEl) {
+  await writeToClipboard(text);
+  flashIconButton(btnEl, HISTORY_ICONS.check, 'is-copied');
 }
 
 function flashButton(btnEl, msg) {
   const original = btnEl.textContent;
   btnEl.textContent = msg;
   setTimeout(() => { btnEl.textContent = original; }, 1200);
+}
+
+function flashIconButton(btnEl, iconHtml, className, duration = 1200) {
+  const original = btnEl.innerHTML;
+  btnEl.innerHTML = iconHtml;
+  btnEl.classList.add(className);
+  setTimeout(() => {
+    btnEl.innerHTML = original;
+    btnEl.classList.remove(className);
+  }, duration);
+}
+
+function flashClass(el, className, duration = 1200) {
+  el.classList.add(className);
+  setTimeout(() => el.classList.remove(className), duration);
 }
 
 /* ---------- utils ---------- */
