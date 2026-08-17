@@ -488,6 +488,16 @@ img {
   font-weight: 700;
 }
 
+.history-card-actions .history-card-delete {
+  background: var(--pink);
+  color: #fff;
+}
+
+.history-card-delete:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* ---------- customize panel ---------- */
 
 .customize-panel {

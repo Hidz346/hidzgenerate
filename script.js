@@ -290,7 +290,7 @@ function uploadOne(item) {
           item.status = 'done';
           item.progress = 100;
           renderQueue();
-          generateAndShow(publicUrlData.publicUrl, item.file.name);
+          generateAndShow(publicUrlData.publicUrl, item.file.name, path);
           resolve();
         },
       });
@@ -534,9 +534,9 @@ function buildQrOptions(text, size, style) {
   };
 }
 
-function generateAndShow(text, label) {
+function generateAndShow(text, label, storagePath) {
   presentResult(text, label);
-  addHistoryCard(text, label);
+  addHistoryCard(text, label, storagePath);
 }
 
 function renderResultQr(text, style) {
@@ -558,7 +558,7 @@ function refreshLivePreview() {
   renderResultQr(currentResultUrl, { ...qrStyle });
 }
 
-function addHistoryCard(text, label) {
+function addHistoryCard(text, label, storagePath) {
   historyEmpty.classList.add('is-hidden');
   const styleSnapshot = { ...qrStyle };
 
@@ -591,10 +591,44 @@ function addHistoryCard(text, label) {
   copyBtn.textContent = 'Salin';
   copyBtn.addEventListener('click', () => copyText(text, copyBtn));
 
-  actions.append(dlBtn, copyBtn);
+  const delBtn = document.createElement('button');
+  delBtn.type = 'button';
+  delBtn.className = 'history-card-delete';
+  delBtn.textContent = 'Hapus';
+  delBtn.addEventListener('click', () => deleteHistoryCard(li, delBtn, storagePath));
+
+  actions.append(dlBtn, copyBtn, delBtn);
   li.appendChild(actions);
 
   historyList.prepend(li);
+}
+
+// Hapus 1 kartu riwayat. Kalau riwayatnya berasal dari mode Upload File
+// (storagePath terisi), file aslinya di Supabase Storage ikut dihapus juga —
+// jadi link publik yang sudah kepatri di QR itu langsung mati dan QR-nya
+// otomatis nggak bisa dipakai lagi begitu di-scan. Riwayat dari mode Link/Teks
+// nggak nyimpen apa-apa di server, jadi cukup dihapus dari daftar saja.
+async function deleteHistoryCard(li, delBtn, storagePath) {
+  const confirmMsg = storagePath
+    ? 'Hapus riwayat ini? File yang sudah diupload ikut terhapus dan QR-nya jadi nggak bisa dipakai lagi. Lanjutkan?'
+    : 'Hapus riwayat ini?';
+  if (!confirm(confirmMsg)) return;
+
+  if (storagePath) {
+    delBtn.disabled = true;
+    delBtn.textContent = 'Menghapus...';
+    const { error } = await supabase.storage.from(BUCKET).remove([storagePath]);
+    delBtn.disabled = false;
+    if (error) {
+      console.error('Gagal menghapus file:', error);
+      delBtn.textContent = 'Hapus';
+      flashButton(delBtn, 'Gagal, coba lagi');
+      return;
+    }
+  }
+
+  li.remove();
+  if (!historyList.children.length) historyEmpty.classList.remove('is-hidden');
 }
 
 /* ---------- result actions ---------- */
