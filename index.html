@@ -45,11 +45,11 @@
           id="link-input"
           class="text-input"
           type="text"
-          placeholder="https://hidzproject.web.id atau teks apa aja..."
+          placeholder="https://hidzproject.my.id"
           autocomplete="off"
         >
         <button id="btn-generate-link" class="btn btn-primary" type="button">
-          Buat QR
+          GENERATE QR
         </button>
       </div>
 
@@ -73,7 +73,7 @@
         <ul id="file-queue" class="file-queue"></ul>
 
         <button id="btn-upload-files" class="btn btn-primary is-hidden" type="button">
-          Upload &amp; Buat QR
+          Upload &amp; GENERATE QR
         </button>
       </div>
 
@@ -150,13 +150,8 @@
     <p>HidzGenerate &mdash; bagian dari HidzProject</p>
   </footer>
 
-  <!-- DEBUG SEMENTARA — buat lihat error asli browser (Console & Network) langsung
-       di HP. Tinggal buka bulatan kecil yang muncul di pojok layar setelah halaman
-       ke-load. HAPUS dua baris ini kalau proses diagnosa upload udah selesai. -->
-  <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
-  <script>eruda.init();</script>
-
   <script src="https://cdn.jsdelivr.net/npm/qr-code-styling@1.9.2/lib/qr-code-styling.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.3.1/dist/tus.min.js"></script>
   <script type="module" src="script.js"></script>
 </body>
 </html>

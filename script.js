@@ -1,5 +1,10 @@
 import { supabase, BUCKET, SUPABASE_ANON_KEY, RESUMABLE_ENDPOINT, RESUMABLE_ENDPOINT_FALLBACK } from './supabase-config.js';
-import * as tus from 'https://esm.sh/tus-js-client@4.3.1';
+// tus-js-client dimuat sebagai <script> UMD biasa di index.html (bukan ESM dari
+// esm.sh), karena build ESM esm.sh salah deteksi environment jadi Node.js alih-alih
+// browser, yang bikin error "source object may only be an instance of Buffer or
+// Readable in this environment" begitu mulai upload. Build UMD dari dist/tus.min.js
+// dibangun khusus dari source browser, jadi bebas dari masalah deteksi itu.
+// Variabel `tus` di bawah ini otomatis tersedia secara global dari script tag itu.
 
 const tabs = document.querySelectorAll('.tab');
 const modePanels = document.querySelectorAll('.mode-body');
