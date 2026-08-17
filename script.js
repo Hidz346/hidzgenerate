@@ -1,4 +1,4 @@
-import { supabase, BUCKET, SUPABASE_ANON_KEY, RESUMABLE_ENDPOINT } from './supabase-config.js';
+import { supabase, BUCKET, SUPABASE_ANON_KEY, RESUMABLE_ENDPOINT, RESUMABLE_ENDPOINT_FALLBACK } from './supabase-config.js';
 import * as tus from 'https://esm.sh/tus-js-client@4.3.1';
 
 const tabs = document.querySelectorAll('.tab');
@@ -238,60 +238,76 @@ function uploadOne(item) {
   const isLegacyJwtKey = SUPABASE_ANON_KEY.startsWith('eyJ');
 
   return new Promise((resolve) => {
-    const upload = new tus.Upload(item.file, {
-      endpoint: RESUMABLE_ENDPOINT,
-      retryDelays: [0, 3000, 5000, 10000, 20000],
-      chunkSize: 6 * 1024 * 1024, // wajib persis 6MB, ketentuan dari sisi Supabase
-      uploadDataDuringCreation: true,
-      removeFingerprintOnSuccess: true,
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        ...(isLegacyJwtKey ? { authorization: `Bearer ${SUPABASE_ANON_KEY}` } : {}),
-        'x-upsert': 'false',
-      },
-      metadata: {
-        bucketName: BUCKET,
-        objectName: path,
-        contentType: item.file.type || 'application/octet-stream',
-        cacheControl: '3600',
-      },
-      onProgress: (bytesUploaded, bytesTotal) => {
-        item.progress = Math.round((bytesUploaded / bytesTotal) * 100);
-        const bar = fileQueueEl.querySelector(`[data-id="${item.id}"] .file-progress-bar`);
-        if (bar) bar.style.width = `${item.progress}%`;
-      },
-      onError: (error) => {
-        item.status = 'error';
-        item.errorMessage = describeUploadError(error);
-        console.error('Upload gagal:', error);
-        renderQueue();
-        resolve();
-      },
-      onSuccess: () => {
-        const { data: publicUrlData } = supabase.storage.from(BUCKET).getPublicUrl(path);
-        item.status = 'done';
-        item.progress = 100;
-        renderQueue();
-        generateAndShow(publicUrlData.publicUrl, item.file.name);
-        resolve();
-      },
-    });
-
-    // Kalau koneksi sempat putus di tengah jalan pada file yang sama, lanjutkan
-    // dari titik terakhir alih-alih upload ulang dari nol. Kalau proses cek ini
-    // sendiri yang gagal (mis. akses ke penyimpanan browser diblokir), jangan
-    // sampai upload-nya nyangkut diam-diam tanpa error — langsung mulai upload
-    // baru sebagai fallback.
-    upload.findPreviousUploads()
-      .then((previousUploads) => {
-        if (previousUploads.length > 0) {
-          upload.resumeFromPreviousUpload(previousUploads[0]);
-        }
-        upload.start();
-      })
-      .catch(() => {
-        upload.start();
+    // endpoint storage langsung (RESUMABLE_ENDPOINT) dicoba dulu karena lebih
+    // cepat, tapi subdomain-nya kadang belum ke-resolve di sebagian jaringan/DNS
+    // walau project-nya sendiri aktif & sehat. Kalau itu yang terjadi (nggak ada
+    // response sama sekali, bukan ditolak server), otomatis coba sekali lagi
+    // lewat RESUMABLE_ENDPOINT_FALLBACK di domain project utama sebelum
+    // benar-benar dianggap gagal.
+    const attemptUpload = (endpoint, canFallback) => {
+      const upload = new tus.Upload(item.file, {
+        endpoint,
+        retryDelays: [0, 3000, 5000, 10000, 20000],
+        chunkSize: 6 * 1024 * 1024, // wajib persis 6MB, ketentuan dari sisi Supabase
+        uploadDataDuringCreation: true,
+        removeFingerprintOnSuccess: true,
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          ...(isLegacyJwtKey ? { authorization: `Bearer ${SUPABASE_ANON_KEY}` } : {}),
+          'x-upsert': 'false',
+        },
+        metadata: {
+          bucketName: BUCKET,
+          objectName: path,
+          contentType: item.file.type || 'application/octet-stream',
+          cacheControl: '3600',
+        },
+        onProgress: (bytesUploaded, bytesTotal) => {
+          item.progress = Math.round((bytesUploaded / bytesTotal) * 100);
+          const bar = fileQueueEl.querySelector(`[data-id="${item.id}"] .file-progress-bar`);
+          if (bar) bar.style.width = `${item.progress}%`;
+        },
+        onError: (error) => {
+          const noResponse = !error?.originalResponse?.getStatus?.();
+          if (canFallback && noResponse && endpoint !== RESUMABLE_ENDPOINT_FALLBACK) {
+            console.warn('Endpoint storage langsung tidak terjangkau, coba endpoint fallback...', error);
+            attemptUpload(RESUMABLE_ENDPOINT_FALLBACK, false);
+            return;
+          }
+          item.status = 'error';
+          item.errorMessage = describeUploadError(error);
+          console.error('Upload gagal:', error);
+          renderQueue();
+          resolve();
+        },
+        onSuccess: () => {
+          const { data: publicUrlData } = supabase.storage.from(BUCKET).getPublicUrl(path);
+          item.status = 'done';
+          item.progress = 100;
+          renderQueue();
+          generateAndShow(publicUrlData.publicUrl, item.file.name);
+          resolve();
+        },
       });
+
+      // Kalau koneksi sempat putus di tengah jalan pada file yang sama, lanjutkan
+      // dari titik terakhir alih-alih upload ulang dari nol. Kalau proses cek ini
+      // sendiri yang gagal (mis. akses ke penyimpanan browser diblokir), jangan
+      // sampai upload-nya nyangkut diam-diam tanpa error — langsung mulai upload
+      // baru sebagai fallback.
+      upload.findPreviousUploads()
+        .then((previousUploads) => {
+          if (previousUploads.length > 0) {
+            upload.resumeFromPreviousUpload(previousUploads[0]);
+          }
+          upload.start();
+        })
+        .catch(() => {
+          upload.start();
+        });
+    };
+
+    attemptUpload(RESUMABLE_ENDPOINT, true);
   });
 }
 
